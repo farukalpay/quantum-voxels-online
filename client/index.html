@@ -1,0 +1,1366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Quantum Voxels</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.js"></script>
+  <script src="/shared/config.js"></script> <!-- Load shared config.js -->
+  <link href="https://fonts.googleapis.com/css2?family=VT323&family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #8e44ee; --primary-dark: #6d23b6; --secondary: #ff3860;
+      --accent: #00e5ff; --accent-alt: #00ffaa; --dark: #000030;
+      --dark-transparent: rgba(0, 0, 0, 0.7); --light: #ffffff;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'VT323', monospace; image-rendering: pixelated; }
+    body { overflow: hidden; background-color: #000; color: var(--light); }
+    #gameContainer { position: relative; width: 100vw; height: 100vh; display: none; }
+    canvas { width: 100%; height: 100%; cursor: crosshair; }
+    .mc-container { background-color: rgba(0, 0, 0, 0.6); border: 2px solid #555555; padding: 6px; color: #FFFFFF; image-rendering: pixelated; }
+    .mc-button { background-color: #545454; border: 2px solid; border-color: #7b7b7b #303030 #303030 #7b7b7b; color: #FFFFFF; padding: 4px 10px; font-size: 18px; margin: 4px; cursor: pointer; text-transform: uppercase; text-align: center; outline: none; image-rendering: pixelated; }
+    .mc-button:hover { background-color: #686868; }
+    .mc-button:active { border-color: #303030 #7b7b7b #7b7b7b #303030; background-color: #484848; }
+    #loadingScreen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000030; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 9999; }
+    #loadingTitle { font-size: 64px; color: var(--accent); margin-bottom: 30px; text-transform: uppercase; letter-spacing: 6px; text-shadow: 2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000; font-weight: bold; text-align: center; animation: title-bounce 2s infinite; }
+    @keyframes title-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+    #loadingBar { width: 400px; height: 20px; background-color: #000000; border: 2px solid #555555; margin-bottom: 20px; image-rendering: pixelated; }
+    #loadingProgress { height: 100%; width: 0%; background: repeating-linear-gradient(to right, #aa00ff, #aa00ff 10px, #8800cc 10px, #8800cc 20px); transition: width 0.5s; }
+    #loadingText { color: var(--light); font-size: 24px; margin-bottom: 15px; text-align: center; text-shadow: 2px 2px 0px #000; }
+    #startButton { background-color: #44A044; color: white; border: 2px solid; border-color: #77dd77 #225522 #225522 #77dd77; padding: 12px 24px; font-size: 32px; cursor: pointer; transition: all 0.2s; margin-top: 20px; text-transform: uppercase; font-weight: bold; letter-spacing: 2px; display: none; image-rendering: pixelated; }
+    #startButton:hover { background-color: #55B055; transform: scale(1.05); }
+    #startButton:active { border-color: #225522 #77dd77 #77dd77 #225522; background-color: #338033; }
+    #hud { position: absolute; top: 15px; left: 15px; padding: 10px; z-index: 10; display: flex; flex-direction: column; gap: 5px; }
+    .hudItem { display: flex; align-items: center; gap: 5px; font-size: 18px; }
+    .hudValue { color: var(--accent); font-weight: 500; }
+    .progress-container { background-color: #000000; border: 2px solid #555555; height: 16px; width: 180px; position: relative; }
+    .progress-fill { height: 100%; transition: width 0.3s; position: absolute; top: 0; left: 0; }
+    #healthFill { background-color: #FF0000; width: 100%; }
+    #energyFill { background-color: #00AAFF; width: 100%; }
+    #hotbar { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; justify-content: center; z-index: 10; }
+    .hotbar-slots { display: flex; }
+    .hotbar-slot { width: 48px; height: 48px; background-color: rgba(0, 0, 0, 0.5); border: 2px solid #555555; margin: 0 2px; display: flex; justify-content: center; align-items: center; font-size: 24px; position: relative; }
+    .hotbar-slot.selected { border-color: #FFFFFF; background-color: rgba(255, 255, 255, 0.2); }
+    .hotbar-key { position: absolute; top: -20px; font-size: 14px; color: #FFFFFF; text-shadow: 1px 1px 0px #000; }
+    .item-count { position: absolute; right: 2px; bottom: 2px; font-size: 14px; color: white; text-shadow: 1px 1px 0px #000; }
+    #crosshair { position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; z-index: 5; pointer-events: none; transform: translate(-50%, -50%); }
+    #crosshair::before, #crosshair::after { content: ''; position: absolute; background-color: rgba(255, 255, 255, 0.8); }
+    #crosshair::before { width: 20px; height: 2px; top: 9px; left: 0; }
+    #crosshair::after { width: 2px; height: 20px; left: 9px; top: 0; }
+    #quantumLabContainer {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background-color: rgba(0, 0, 0, 0.8);
+      padding: 20px;
+      border: 2px solid var(--primary);
+      border-radius: 10px;
+      z-index: 1000;
+      display: none;
+    }
+    #minimap { position: absolute; top: 15px; right: 15px; width: 150px; height: 150px; background-color: rgba(0, 0, 0, 0.5); border: 2px solid #555555; z-index: 10; padding: 5px; }
+    #minimapCanvas { width: 140px; height: 140px; background-color: rgba(0, 0, 0, 0.3); }
+    #interactionText { position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%); color: white; font-size: 18px; text-align: center; text-shadow: 2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000; z-index: 10; pointer-events: none; }
+    #messageBox { position: absolute; top: 80px; left: 50%; transform: translate(-50%, -50%); background-color: rgba(0, 0, 0, 0.7); color: #fff; padding: 10px 20px; border: 2px solid #555555; display: none; text-align: center; max-width: 80%; z-index: 100; font-size: 20px; animation: fadeIn 0.3s ease-in-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translate(-50%, -20px); } to { opacity: 1; transform: translate(-50%, 0); } }
+    #welcomeScreen { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80%; max-width: 600px; background-color: rgba(0, 0, 30, 0.85); border: 3px solid var(--primary); border-radius: 10px; padding: 25px; z-index: 1000; text-align: center; box-shadow: 0 0 30px rgba(142, 68, 238, 0.5); backdrop-filter: blur(10px); }
+    #welcomeTitle { font-size: 36px; color: var(--accent); margin-bottom: 20px; text-shadow: 0 0 10px var(--accent); font-family: 'Orbitron', sans-serif; }
+    #welcomeContent { font-size: 18px; line-height: 1.5; margin-bottom: 20px; }
+    #welcomeStartButton { background: linear-gradient(to bottom, var(--primary), var(--primary-dark)); color: white; border: 2px solid; border-color: #aa66ff #441188 #441188 #aa66ff; padding: 12px 24px; font-size: 22px; border-radius: 5px; cursor: pointer; transition: all 0.2s; margin: 10px auto; display: block; text-transform: uppercase; font-family: 'Orbitron', sans-serif; }
+    #welcomeStartButton:hover { transform: translateY(-3px); box-shadow: 0 0 20px rgba(142, 68, 238, 0.7); }
+    .block-dirt { background-color: #8B4513; }
+    .block-stone { background-color: #888888; }
+    .block-glass { background: linear-gradient(135deg, rgba(173, 216, 230, 0.6) 0%, rgba(173, 216, 230, 0.4) 50%, rgba(173, 216, 230, 0.6) 100%); box-shadow: inset 0 0 10px rgba(255, 255, 255, 0.4), 0 0 5px rgba(0, 0, 0, 0.3); }
+    .block-quantum { background-color: #AA00FF; animation: quantum-pulse 2s infinite; box-shadow: 0 0 15px rgba(170, 0, 255, 0.7); }
+    .block-teleport { background-color: #00FFAA; animation: teleport-pulse 1.5s infinite; box-shadow: 0 0 15px rgba(0, 255, 170, 0.7); }
+    @keyframes quantum-pulse { 0% { filter: brightness(0.8); } 50% { filter: brightness(1.2); } 100% { filter: brightness(0.8); } }
+    @keyframes teleport-pulse { 0% { filter: brightness(0.8) hue-rotate(0deg); } 50% { filter: brightness(1.3) hue-rotate(30deg); } 100% { filter: brightness(0.8) hue-rotate(0deg); } }
+    #viewModeIndicator { position: absolute; top: 15px; right: 205px; background-color: rgba(0, 0, 0, 0.5); color: white; padding: 5px 10px; border: 2px solid #555555; font-size: 14px; z-index: 100; image-rendering: pixelated; }
+    .breaking-overlay { position: absolute; pointer-events: none; z-index: 2; background-color: rgba(0, 0, 0, 0.5); opacity: 0.7; }
+  </style>
+</head>
+<body>
+  <div id="loadingScreen">
+    <h1 id="loadingTitle">Quantum Voxels</h1>
+    <div id="loadingBar"><div id="loadingProgress"></div></div>
+    <p id="loadingText">Initializing quantum physics engine...</p>
+    <button id="startButton">Start Game</button>
+  </div>
+  <div id="welcomeScreen">
+    <h1 id="welcomeTitle">Quantum Voxels</h1>
+    <div id="welcomeContent">
+      <p>Welcome to the quantum voxel world! Build and explore a universe where quantum physics changes the rules.</p>
+      <p><strong>Controls:</strong></p>
+      <p>Move: WASD | Jump: SPACE | Place: F | Break: Left Click</p>
+      <p>Toggle Mouse: ESC | Quantum Lab: Q | View Mode: V</p>
+      <p>Explore to expand the world!</p>
+    </div>
+    <button id="welcomeStartButton">Start Adventure</button>
+  </div>
+  <div id="gameContainer">
+    <div id="crosshair"></div>
+    <div id="hud" class="mc-container">
+      <div class="hudItem"><span>Position:</span><span id="playerPosition" class="hudValue">0, 0, 0</span></div>
+      <div class="hudItem"><span>Health:</span><div class="progress-container"><div id="healthFill" class="progress-fill"></div></div></div>
+      <div class="hudItem"><span>Quantum Energy:</span><div class="progress-container"><div id="energyFill" class="progress-fill"></div></div></div>
+      <button id="labButton" class="mc-button">Quantum Lab</button>
+    </div>
+    <div id="hotbar"><div class="hotbar-slots"></div></div>
+    <div id="minimap"><canvas id="minimapCanvas"></canvas></div>
+    <div id="viewModeIndicator">Third-Person Mode</div>
+    <div id="interactionText"></div>
+    <div id="messageBox"></div>
+  </div>
+  <div id="quantumLabContainer" style="display: none;">
+    <div id="labTitle" style="font-size:24px; margin:10px;">Quantum Physics Laboratory</div>
+    <button id="closeLabBtn" class="mc-button" style="margin:10px;">Close</button>
+    <div class="lab-section mc-container" style="margin:10px 0;">
+      <h3>Quantum Random Number Generator</h3>
+      <p>Generate random numbers based on quantum uncertainty principles.</p>
+      <button id="generateQuantumBtn" class="mc-button">Generate Quantum Bits</button>
+      <div id="quantumBits"></div>
+    </div>
+    <div class="lab-section mc-container" style="margin:10px 0;">
+      <h3>Quantum Entanglement Experiment</h3>
+      <p>Create entangled quantum particles and observe their correlated behavior.</p>
+      <button id="entanglementBtn" class="mc-button">Create Entangled Pair</button>
+      <div id="entanglementResults"></div>
+    </div>
+    <div class="lab-section mc-container" style="margin:10px 0;">
+      <h3>Quantum Building Applications</h3>
+      <p>Learn how quantum blocks can be used in your constructions.</p>
+      <button id="quantumBuildingBtn" class="mc-button">Show Quantum Builds</button>
+      <div id="buildingResults"></div>
+    </div>
+  </div>
+
+  <script>
+    // Global Variables
+    const socket = io('http://localhost:3000');
+    let myPlayerId;
+    let world = {
+      blockTypes: config.blockTypes,
+      chunkData: {},
+      chunkMeshes: {},
+      blocks: [],
+      time: 0,
+      weather: 'clear',
+      teleporters: []
+    };
+    let scene, camera, renderer, clock, raycaster;
+    let sunLight, moonLight, ambientLight, hemisphereLight;
+    let isPointerLocked = false;
+    let player = {
+      position: new THREE.Vector3(0, 0, 0),
+      velocity: new THREE.Vector3(0, 0, 0),
+      onGround: false,
+      health: 100,
+      energy: 100,
+      selectedSlot: 0,
+      inventory: Array(config.maxInventorySlots).fill(null),
+      model: null,
+      animations: { walking: false, jumping: false, breaking: false, placing: false },
+      lastAnimation: Date.now(),
+      facing: 0,
+      pitch: 0,
+      viewMode: config.defaultViewMode
+    };
+    let gameState = {
+      isPlaying: false,
+      isPaused: false,
+      isLabOpen: false,
+      breakingBlock: null,
+      highlightedBlock: null,
+      lookingAt: null
+    };
+    let controls = { forward: false, backward: false, left: false, right: false, jump: false, run: false };
+    let soundEffects = {};
+    let assets = {};
+    let otherPlayers = {};
+
+    // Initialization
+    window.addEventListener('load', init);
+
+    async function init() {
+      if (typeof config === 'undefined') {
+        console.error('config.js not loaded yet. Waiting...');
+        setTimeout(init, 100);
+        return;
+      }
+
+      updateLoadingProgress(10, "Initializing 3D engine...");
+      setupThreeJS();
+      updateLoadingProgress(20, "Setting up renderer...");
+      setupRenderer();
+      updateLoadingProgress(30, "Connecting to server...");
+      updateLoadingProgress(50, "Adding lighting...");
+      addLighting();
+      updateLoadingProgress(65, "Setting up controls...");
+      setupControls();
+      updateLoadingProgress(75, "Preparing UI...");
+      setupUI();
+      updateLoadingProgress(90, "Initializing assets...");
+      await loadAssets();
+      soundEffects = initializeSounds();
+      updateLoadingProgress(95, "Adding starter items...");
+      addItemToInventory({ type: 'dirt', count: 32 });
+      addItemToInventory({ type: 'stone', count: 32 });
+      addItemToInventory({ type: 'glass', count: 16 });
+      addItemToInventory({ type: 'quantum', count: 8 });
+      addItemToInventory({ type: 'teleport', count: 4 });
+      updateLoadingProgress(100, "Ready to play!");
+      clock = new THREE.Clock();
+      document.getElementById('startButton').style.display = 'block';
+      document.getElementById('startButton').addEventListener('click', startGame);
+    }
+
+    // Socket.IO Events
+    socket.on('welcome', (data) => {
+      console.log('Received welcome data:', data);
+      myPlayerId = data.playerId;
+      player.position.set(data.startPosition.x, data.startPosition.y, data.startPosition.z);
+      world.time = data.gameTime || 0; // Default to 0 if not provided
+      world.weather = data.weather || 'clear'; // Default to 'clear' if not provided
+      for (const [key, chunk] of Object.entries(data.chunkData)) {
+        world.chunkData[key] = chunk;
+        const [chunkX, chunkZ] = key.split('_').map(Number);
+        renderChunk(chunkX, chunkZ);
+      }
+      // Handle other players
+      if (data.otherPlayers && typeof data.otherPlayers === 'object') {
+        for (const [id, info] of Object.entries(data.otherPlayers)) {
+          createOtherPlayerModel(id, info.position, info.facing);
+        }
+      } else {
+        console.warn('No otherPlayers data received or invalid format');
+      }
+    });
+
+    socket.on('gameTimeUpdate', (serverTime) => {
+      world.time = serverTime;
+    });
+
+    socket.on('weatherUpdate', (weather) => {
+      world.weather = weather;
+    });
+
+    socket.on('chunk', ({ chunkX, chunkZ, data }) => {
+      const key = `${chunkX}_${chunkZ}`;
+      world.chunkData[key] = data;
+      console.log(`Received chunk: ${key}`);
+      renderChunk(chunkX, chunkZ);
+    });
+
+    socket.on('playerJoined', (data) => {
+      if (data.playerId !== myPlayerId) {
+        createOtherPlayerModel(data.playerId, data.position);
+      }
+    });
+
+    socket.on('playerMoved', (data) => {
+      if (otherPlayers[data.playerId]) {
+        otherPlayers[data.playerId].position.set(data.position.x, data.position.y, data.position.z);
+        if (data.facing !== undefined) {
+          otherPlayers[data.playerId].rotation.y = data.facing;
+        }
+      }
+    });
+
+    socket.on('playerLeft', (playerId) => {
+      if (otherPlayers[playerId]) {
+        scene.remove(otherPlayers[playerId]);
+        delete otherPlayers[playerId];
+      }
+    });
+
+    // Core Setup Functions
+    function setupThreeJS() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x000040);
+      scene.fog = new THREE.FogExp2(0x000040, 0.005);
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.copy(player.position);
+      raycaster = new THREE.Raycaster();
+    }
+
+    function setupRenderer() {
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      document.getElementById('gameContainer').appendChild(renderer.domElement);
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+    }
+
+    function setupControls() {
+      const canvas = renderer.domElement;
+      canvas.addEventListener('click', () => {
+        if (gameState.isPlaying && !gameState.isLabOpen) canvas.requestPointerLock();
+      });
+      document.addEventListener('pointerlockchange', () => {
+        isPointerLocked = (document.pointerLockElement === canvas);
+        document.getElementById('crosshair').style.display = isPointerLocked ? 'block' : 'none';
+      });
+      window.addEventListener('contextmenu', e => e.preventDefault(), false);
+      document.addEventListener('mousemove', e => {
+        if (isPointerLocked) {
+          player.facing -= (e.movementX || 0) * config.mouseSensitivity;
+          player.pitch -= (e.movementY || 0) * config.mouseSensitivity;
+          player.pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, player.pitch));
+          player.facing = (player.facing + Math.PI * 2) % (Math.PI * 2);
+        }
+      });
+      document.addEventListener('mousedown', e => {
+        if (isPointerLocked && e.button === 0) {
+          startBreakingBlock();
+          setPlayerAnimation('breaking', true);
+        }
+      });
+      document.addEventListener('mouseup', e => {
+        if (e.button === 0) {
+          stopBreakingBlock();
+          setPlayerAnimation('breaking', false);
+        }
+      });
+      document.addEventListener('keydown', e => {
+        if (e.repeat) return;
+        switch (e.code) {
+          case 'KeyW': controls.forward = true; break;
+          case 'KeyS': controls.backward = true; break;
+          case 'KeyA': controls.left = true; break;
+          case 'KeyD': controls.right = true; break;
+          case 'Space': controls.jump = true; break;
+          case 'ShiftLeft': controls.run = true; break;
+          case 'KeyQ': toggleQuantumLab(); break;
+          case 'Escape': togglePointerLock(); break;
+          case 'KeyV': toggleViewMode(); break;
+          case 'KeyF':
+            placeBlock();
+            setPlayerAnimation('placing', true);
+            setTimeout(() => setPlayerAnimation('placing', false), 500);
+            break;
+        }
+        if (e.code.startsWith('Digit')) {
+          const digit = parseInt(e.code.substring(5)) - 1;
+          if (digit >= 0 && digit < 9) selectHotbarSlot(digit);
+        }
+      });
+      document.addEventListener('keyup', e => {
+        switch (e.code) {
+          case 'KeyW': controls.forward = false; break;
+          case 'KeyS': controls.backward = false; break;
+          case 'KeyA': controls.left = false; break;
+          case 'KeyD': controls.right = false; break;
+          case 'Space': controls.jump = false; break;
+          case 'ShiftLeft': controls.run = false; break;
+        }
+      });
+      document.getElementById('welcomeStartButton').addEventListener('click', () => {
+        document.getElementById('welcomeScreen').style.display = 'none';
+        canvas.requestPointerLock();
+      });
+      document.getElementById('labButton').addEventListener('click', toggleQuantumLab);
+      document.getElementById('closeLabBtn').addEventListener('click', toggleQuantumLab);
+      document.getElementById('generateQuantumBtn').addEventListener('click', generateQuantumBits);
+      document.getElementById('entanglementBtn').addEventListener('click', createEntangledPair);
+      document.getElementById('quantumBuildingBtn').addEventListener('click', showQuantumBuilds);
+    }
+
+    // Lighting and Sky
+    function addLighting() {
+      ambientLight = new THREE.AmbientLight(0x666666);
+      scene.add(ambientLight);
+      sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
+      sunLight.position.set(50, 100, 50);
+      sunLight.castShadow = true;
+      sunLight.shadow.mapSize.set(2048, 2048);
+      sunLight.shadow.camera.near = 0.5;
+      sunLight.shadow.camera.far = 500;
+      sunLight.shadow.camera.left = -100;
+      sunLight.shadow.camera.right = 100;
+      sunLight.shadow.camera.top = 100;
+      sunLight.shadow.camera.bottom = -100;
+      scene.add(sunLight);
+      moonLight = new THREE.DirectionalLight(0xffffff, 0.2);
+      moonLight.position.set(-50, -100, -50);
+      scene.add(moonLight);
+      hemisphereLight = new THREE.HemisphereLight(0x88aaff, 0x884411, 0.6);
+      scene.add(hemisphereLight);
+      createSkybox();
+    }
+
+    function createSkybox() {
+      const skyboxGeometry = new THREE.BoxGeometry(1000, 1000, 1000);
+      const skyboxMaterials = [
+        new THREE.MeshBasicMaterial({ color: 0x4466aa, side: THREE.BackSide }),
+        new THREE.MeshBasicMaterial({ color: 0x4466aa, side: THREE.BackSide }),
+        new THREE.MeshBasicMaterial({ color: 0x6688cc, side: THREE.BackSide }),
+        new THREE.MeshBasicMaterial({ color: 0x6644aa, side: THREE.BackSide }),
+        new THREE.MeshBasicMaterial({ color: 0x4466aa, side: THREE.BackSide }),
+        new THREE.MeshBasicMaterial({ color: 0x4466aa, side: THREE.BackSide })
+      ];
+      scene.add(new THREE.Mesh(skyboxGeometry, skyboxMaterials));
+      addStarsToSkybox();
+    }
+
+    function addStarsToSkybox() {
+      const starsGeometry = new THREE.BufferGeometry();
+      const vertices = [];
+      for (let i = 0; i < 2000; i++) {
+        const theta = 2 * Math.PI * Math.random();
+        const phi = Math.acos(2 * Math.random() - 1);
+        const r = 400 + Math.random() * 100;
+        vertices.push(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi));
+      }
+      starsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      scene.add(new THREE.Points(starsGeometry, new THREE.PointsMaterial({ color: 0xffffff, size: 0.5, transparent: true, opacity: 0.8 })));
+    }
+
+    // Game Loop
+    function animate() {
+      if (!gameState.isPlaying) return;
+      requestAnimationFrame(animate);
+      const delta = Math.min(clock.getDelta(), 0.1);
+      if (!gameState.isLabOpen) {
+        updatePlayer(delta);
+        if (player.model) {
+          player.model.position.copy(player.position);
+          player.model.rotation.y = player.facing;
+          player.model.visible = player.viewMode === 'third-person';
+          if (!scene.getObjectById(player.model.id)) scene.add(player.model);
+        }
+        updateCamera(delta);
+        updatePlayerAnimations(delta);
+        updateRaycaster();
+        updateBreakingBlock(delta);
+      }
+      animateQuantumBlocks(delta);
+      updateDayNightCycle(delta);
+      updateWeather(delta);
+      if (Math.random() < 0.05) renderWorldChunks();
+      if (Math.random() < 0.1) updateMinimap();
+      renderer.render(scene, camera);
+    }
+
+    function startGame() {
+      document.getElementById('loadingScreen').style.display = 'none';
+      document.getElementById('gameContainer').style.display = 'block';
+      document.getElementById('welcomeScreen').style.display = 'block';
+      gameState.isPlaying = true;
+      gameState.isPaused = false;
+      createPlayerMesh();
+      updateHUD();
+      animate();
+      setTimeout(() => showMessage("Press V to toggle view mode", 4000), 2000);
+    }
+
+    // Player and Camera
+    function createPlayerMesh() {
+      const playerModel = new THREE.Group();
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), new THREE.MeshStandardMaterial({ color: 0xC8A47E }));
+      head.position.y = 1.5;
+      playerModel.add(head);
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.9, 0.3), new THREE.MeshStandardMaterial({ color: 0x3838BC }));
+      body.position.y = 0.75;
+      playerModel.add(body);
+      const armMaterial = new THREE.MeshStandardMaterial({ color: 0x3838BC });
+      const leftArm = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.9, 0.2), armMaterial);
+      leftArm.position.set(-0.4, 0.75, 0);
+      leftArm.name = 'leftArm';
+      playerModel.add(leftArm);
+      const rightArm = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.9, 0.2), armMaterial);
+      rightArm.position.set(0.4, 0.75, 0);
+      rightArm.name = 'rightArm';
+      playerModel.add(rightArm);
+      const legMaterial = new THREE.MeshStandardMaterial({ color: 0x293675 });
+      const leftLeg = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.9, 0.2), legMaterial);
+      leftLeg.position.set(-0.2, 0, 0);
+      leftLeg.name = 'leftLeg';
+      playerModel.add(leftLeg);
+      const rightLeg = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.9, 0.2), legMaterial);
+      rightLeg.position.set(0.2, 0, 0);
+      rightLeg.name = 'rightLeg';
+      playerModel.add(rightLeg);
+      scene.add(playerModel);
+      player.model = playerModel;
+      player.model.visible = player.viewMode === 'third-person';
+    }
+
+    function createOtherPlayerModel(id, position, facing = 0) {
+      const playerModel = new THREE.Group();
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), new THREE.MeshStandardMaterial({ color: 0xC8A47E }));
+      head.position.y = 1.5;
+      playerModel.add(head);
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.9, 0.3), new THREE.MeshStandardMaterial({ color: 0x3838BC }));
+      body.position.y = 0.75;
+      playerModel.add(body);
+      const armMaterial = new THREE.MeshStandardMaterial({ color: 0x3838BC });
+      const leftArm = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.9, 0.2), armMaterial);
+      leftArm.position.set(-0.4, 0.75, 0);
+      playerModel.add(leftArm);
+      const rightArm = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.9, 0.2), armMaterial);
+      rightArm.position.set(0.4, 0.75, 0);
+      playerModel.add(rightArm);
+      const legMaterial = new THREE.MeshStandardMaterial({ color: 0x293675 });
+      const leftLeg = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.9, 0.2), legMaterial);
+      leftLeg.position.set(-0.2, 0, 0);
+      playerModel.add(leftLeg);
+      const rightLeg = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.9, 0.2), legMaterial);
+      rightLeg.position.set(0.2, 0, 0);
+      playerModel.add(rightLeg);
+      playerModel.position.set(position.x, position.y, position.z);
+      playerModel.rotation.y = facing;
+      scene.add(playerModel);
+      otherPlayers[id] = playerModel;
+    }
+
+    function updateCamera(delta) {
+      if (player.viewMode === 'first-person') {
+        camera.position.set(player.position.x, player.position.y + 1.7, player.position.z);
+        camera.rotation.order = 'YXZ';
+        camera.rotation.y = player.facing;
+        camera.rotation.x = player.pitch;
+        camera.rotation.z = 0;
+      } else {
+        const camDist = 5, camHeight = 2.0;
+        camera.position.set(
+          player.position.x + Math.sin(player.facing) * camDist,
+          player.position.y + camHeight,
+          player.position.z + Math.cos(player.facing) * camDist
+        );
+        camera.lookAt(player.position.x, player.position.y + 1.0, player.position.z);
+      }
+    }
+
+    function updatePlayer(delta) {
+      player.velocity.y -= config.gravity * delta;
+      let moveX = (controls.right ? 1 : 0) - (controls.left ? 1 : 0);
+      let moveZ = (controls.backward ? 1 : 0) - (controls.forward ? 1 : 0);
+      let targetVelocity = new THREE.Vector3(moveX, 0, moveZ);
+      if (targetVelocity.lengthSq() > 0) {
+        targetVelocity.normalize();
+        const cosAngle = Math.cos(player.facing), sinAngle = Math.sin(player.facing);
+        targetVelocity.set(
+          targetVelocity.x * cosAngle - targetVelocity.z * sinAngle,
+          0,
+          targetVelocity.x * sinAngle + targetVelocity.z * cosAngle
+        ).multiplyScalar(config.moveSpeed * (controls.run ? 1.5 : 1.0));
+      }
+      if (isNaN(targetVelocity.x)) targetVelocity.x = 0;
+      if (isNaN(targetVelocity.z)) targetVelocity.z = 0;
+      player.velocity.x += (targetVelocity.x - player.velocity.x) * (player.onGround ? 20 : 0.3) * delta;
+      player.velocity.z += (targetVelocity.z - player.velocity.z) * (player.onGround ? 20 : 0.3) * delta;
+      if (isNaN(player.velocity.x)) player.velocity.x = 0;
+      if (isNaN(player.velocity.z)) player.velocity.z = 0;
+
+      if (controls.jump && player.onGround) {
+        player.velocity.y = config.jumpForce;
+        player.onGround = false;
+        playSound('jump');
+      }
+      moveWithCollisions(delta);
+      socket.emit('move', { 
+        playerId: myPlayerId, 
+        position: { x: player.position.x, y: player.position.y, z: player.position.z },
+        facing: player.facing
+      });
+      document.getElementById('playerPosition').textContent = `${Math.floor(player.position.x)}, ${Math.floor(player.position.y)}, ${Math.floor(player.position.z)}`;
+    }
+
+    function updatePlayerAnimations(delta) {
+      if (!player.model) return;
+      const isMoving = controls.forward || controls.backward || controls.left || controls.right;
+      const leftLeg = player.model.getObjectByName('leftLeg');
+      const rightLeg = player.model.getObjectByName('rightLeg');
+      if (isMoving && player.onGround) {
+        const time = Date.now() * 0.005;
+        if (leftLeg) leftLeg.rotation.x = Math.sin(time) * 0.5;
+        if (rightLeg) rightLeg.rotation.x = Math.sin(time + Math.PI) * 0.5;
+      } else {
+        if (leftLeg) leftLeg.rotation.x = 0;
+        if (rightLeg) rightLeg.rotation.x = 0;
+      }
+    }
+
+    function moveWithCollisions(delta) {
+      let newPos = player.position.clone();
+      const steps = ['x', 'z', 'y'];
+      for (let axis of steps) {
+        const d = player.velocity[axis] * delta;
+        newPos[axis] += d;
+        if (isNaN(newPos[axis])) newPos[axis] = player.position[axis];
+        if (!hasCollisionAt(newPos)) {
+          player.position[axis] = newPos[axis];
+        } else {
+          if (axis === 'y' && d < 0) {
+            player.position.y = Math.floor(player.position.y - 0.1) + 1;
+            player.onGround = true;
+            if (d < -8) playSound('land');
+          } else if (axis === 'y' && d > 0) {
+            player.position.y = Math.floor(player.position.y + 1.8) - 1.8 - 0.01;
+          }
+          player.velocity[axis] = 0;
+          newPos[axis] = player.position[axis];
+        }
+      }
+      player.velocity.y = Math.max(player.velocity.y, -20);
+      const edge = 5;
+      if (player.position.x < edge) { player.position.x = edge; checkForWorldExpansion('west'); }
+      else if (player.position.x > config.worldWidth - edge) { player.position.x = config.worldWidth - edge; checkForWorldExpansion('east'); }
+      if (player.position.z < edge) { player.position.z = edge; checkForWorldExpansion('north'); }
+      else if (player.position.z > config.worldDepth - edge) { player.position.z = config.worldDepth - edge; checkForWorldExpansion('south'); }
+      player.position.y = Math.max(0.5, Math.min(config.worldHeight - 0.5, player.position.y));
+      checkTeleport();
+      const blockBelow = getBlockAt(Math.floor(player.position.x), Math.floor(player.position.y - 0.1), Math.floor(player.position.z));
+      if (blockBelow === world.blockTypes.quantum.id && player.onGround) {
+        player.energy = Math.min(100, player.energy + delta * 5);
+        updateHUD();
+        if (Math.random() < 0.1) createEnergyParticles(player.position.x, player.position.y, player.position.z, 3, 0xAA00FF);
+      }
+    }
+
+    function hasCollisionAt(pos) {
+      const bounds = {
+        minX: Math.max(0, Math.floor(pos.x - 0.3)),
+        maxX: Math.min(config.worldWidth - 1, Math.floor(pos.x + 0.3)),
+        minY: Math.max(0, Math.floor(pos.y)),
+        maxY: Math.min(config.worldHeight - 1, Math.floor(pos.y + 1.8)),
+        minZ: Math.max(0, Math.floor(pos.z - 0.3)),
+        maxZ: Math.min(config.worldDepth - 1, Math.floor(pos.z + 0.3))
+      };
+      for (let x = bounds.minX; x <= bounds.maxX; x++) {
+        for (let y = bounds.minY; y <= bounds.maxY; y++) {
+          for (let z = bounds.minZ; z <= bounds.maxZ; z++) {
+            const block = getBlockAt(x, y, z);
+            if (block !== 0 && !getBlockTypeProps(block).walkable) return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    // Block Interaction
+    function updateRaycaster() {
+      if (player.viewMode === 'first-person') {
+        raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      } else {
+        const direction = new THREE.Vector3(-Math.sin(player.facing), -0.2, -Math.cos(player.facing)).normalize();
+        raycaster.set(camera.position, direction);
+      }
+      if (gameState.highlightedBlock) {
+        gameState.highlightedBlock.material.color.setHex(gameState.highlightedBlock.userData.originalColor);
+        if (gameState.highlightedBlock.userData.outline) gameState.highlightedBlock.userData.outline.visible = false;
+        gameState.highlightedBlock = null;
+      }
+      document.getElementById('interactionText').textContent = '';
+      gameState.lookingAt = null;
+      const intersects = raycaster.intersectObjects(scene.children, true);
+      for (const intersect of intersects) {
+        const object = intersect.object;
+        if (object.userData && object.userData.isBlock && intersect.distance < config.reachDistance) {
+          gameState.highlightedBlock = object;
+          if (!gameState.highlightedBlock.userData.originalColor) gameState.highlightedBlock.userData.originalColor = object.material.color.getHex();
+          gameState.highlightedBlock.material.color.setHex(0xffffff);
+          if (!gameState.highlightedBlock.userData.outline) {
+            const outline = new THREE.LineSegments(
+              new THREE.EdgesGeometry(object.geometry),
+              new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 })
+            );
+            object.add(outline);
+            gameState.highlightedBlock.userData.outline = outline;
+          }
+          gameState.highlightedBlock.userData.outline.visible = true;
+          gameState.lookingAt = {
+            object: object,
+            position: object.userData.blockPosition,
+            point: intersect.point,
+            face: intersect.face
+          };
+          const blockName = getBlockTypeProps(object.userData.blockType).name;
+          document.getElementById('interactionText').innerHTML = `<strong>${blockName}</strong> - Click to Break, F to Place`;
+          break;
+        }
+      }
+    }
+
+    function startBreakingBlock() {
+      if (gameState.lookingAt) {
+        const props = getBlockTypeProps(gameState.lookingAt.object.userData.blockType);
+        gameState.breakingBlock = {
+          position: gameState.lookingAt.position,
+          progress: 0,
+          object: gameState.lookingAt.object,
+          breakTime: props.breakTime || 1.0
+        };
+        playSound('breakingStart');
+      }
+    }
+
+    function stopBreakingBlock() {
+      if (gameState.breakingBlock && gameState.breakingBlock.object) gameState.breakingBlock.object.scale.set(1, 1, 1);
+      gameState.breakingBlock = null;
+    }
+
+    function updateBreakingBlock(delta) {
+      if (!gameState.breakingBlock) return;
+      gameState.breakingBlock.progress += delta * config.breakSpeed;
+      const prog = Math.min(1, gameState.breakingBlock.progress / gameState.breakingBlock.breakTime);
+      gameState.breakingBlock.object.scale.set(1 - prog * 0.1, 1 - prog * 0.1, 1 - prog * 0.1);
+      if (Math.random() < prog * 0.5) {
+        const pos = gameState.breakingBlock.position;
+        createBlockParticles(pos.x + 0.5 + (Math.random() - 0.5) * 0.8, pos.y + 0.5 + (Math.random() - 0.5) * 0.8, pos.z + 0.5 + (Math.random() - 0.5) * 0.8, gameState.breakingBlock.object.material.color.getHex());
+      }
+      if (prog >= 1) breakBlock();
+    }
+
+    function breakBlock() {
+      if (!gameState.breakingBlock) return;
+      const pos = gameState.breakingBlock.position;
+      const btype = gameState.breakingBlock.object.userData.blockType;
+      const name = Object.keys(world.blockTypes).find(k => world.blockTypes[k].id === btype);
+      if (name) addItemToInventory({ type: name, count: 1 });
+      setBlockAt(pos.x, pos.y, pos.z, 0);
+      createBlockParticles(pos.x + 0.5, pos.y + 0.5, pos.z + 0.5, getBlockTypeProps(btype).color);
+      gameState.breakingBlock = null;
+      updateHotbar();
+      playSound('break');
+    }
+
+    function calculatePlacePosition() {
+      if (!gameState.lookingAt || !gameState.lookingAt.face) return null;
+      const normal = gameState.lookingAt.face.normal;
+      const blockPos = gameState.lookingAt.position;
+      return { x: blockPos.x + normal.x, y: blockPos.y + normal.y, z: blockPos.z + normal.z };
+    }
+
+    function placeBlock() {
+      const pos = calculatePlacePosition();
+      if (pos && getBlockAt(pos.x, pos.y, pos.z) === 0) {
+        const selectedItem = player.inventory[player.selectedSlot];
+        if (selectedItem && selectedItem.count > 0) {
+          const blockType = world.blockTypes[selectedItem.type];
+          setBlockAt(pos.x, pos.y, pos.z, blockType.id);
+          selectedItem.count--;
+          if (selectedItem.count <= 0) player.inventory[player.selectedSlot] = null;
+          updateHotbar();
+          playSound('place');
+        }
+      }
+    }
+
+    // Utility Functions
+    function getBlockAt(x, y, z) {
+      const chunkX = Math.floor(x / config.chunkSize);
+      const chunkZ = Math.floor(z / config.chunkSize);
+      const key = `${chunkX}_${chunkZ}`;
+      const chunk = world.chunkData[key];
+      if (!chunk) return 0;
+      const localX = x % config.chunkSize;
+      const localZ = z % config.chunkSize;
+      if (localX < 0) localX += config.chunkSize;
+      if (localZ < 0) localZ += config.chunkSize;
+      if (y < 0 || y >= config.worldHeight) return 0;
+      const blockRow = chunk[localX];
+      if (!blockRow) return 0;
+      const blockColumn = blockRow[localZ];
+      if (!blockColumn) return 0;
+      return blockColumn[y] || 0;
+    }
+
+    function setBlockAt(x, y, z, id) {
+      const chunkX = Math.floor(x / config.chunkSize);
+      const chunkZ = Math.floor(z / config.chunkSize);
+      const key = `${chunkX}_${chunkZ}`;
+      const chunk = world.chunkData[key];
+      if (chunk && y >= 0 && y < config.worldHeight) {
+        const localX = ((x % config.chunkSize) + config.chunkSize) % config.chunkSize;
+        const localZ = ((z % config.chunkSize) + config.chunkSize) % config.chunkSize;
+        chunk[localX][localZ][y] = id;
+        renderChunk(chunkX, chunkZ);
+        return true;
+      }
+      return false;
+    }
+
+    function getBlockTypeProps(id) {
+      const block = Object.values(world.blockTypes).find(b => b.id === id) || world.blockTypes.air;
+      return {
+        ...block,
+        color: parseInt(block.color, 16)
+      };
+    }
+
+    function togglePointerLock() {
+      if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+      else renderer.domElement.requestPointerLock();
+    }
+
+    function toggleViewMode() {
+      player.viewMode = player.viewMode === 'first-person' ? 'third-person' : 'first-person';
+      showMessage(`Switched to ${player.viewMode} view`, 2000);
+      if (player.model) player.model.visible = player.viewMode === 'third-person';
+      document.getElementById('viewModeIndicator').textContent = player.viewMode === 'first-person' ? 'First-Person Mode' : 'Third-Person Mode';
+    }
+
+    function updateHotbar() {
+      const hb = document.querySelector('.hotbar-slots');
+      hb.innerHTML = '';
+      for (let i = 0; i < config.maxInventorySlots; i++) {
+        const slot = document.createElement('div');
+        slot.className = 'hotbar-slot' + (i === player.selectedSlot ? ' selected' : '');
+        slot.innerHTML = `<div class="hotbar-key">${i + 1}</div>`;
+        const item = player.inventory[i];
+        if (item) {
+          const props = world.blockTypes[item.type];
+          slot.innerHTML += `<div style="font-size:28px;${props.className ? `class="${props.className}"` : ''}">${props.emoji}</div><div class="item-count">${item.count}</div>`;
+        }
+        hb.appendChild(slot);
+      }
+    }
+
+    function selectHotbarSlot(idx) {
+      if (idx >= 0 && idx < config.maxInventorySlots && idx !== player.selectedSlot) {
+        player.selectedSlot = idx;
+        updateHotbar();
+        playSound('select');
+      }
+    }
+
+    function addItemToInventory(item) {
+      for (let i = 0; i < player.inventory.length; i++) {
+        const slot = player.inventory[i];
+        if (slot && slot.type === item.type && slot.count < 64) {
+          const toAdd = Math.min(item.count, 64 - slot.count);
+          slot.count += toAdd;
+          item.count -= toAdd;
+          if (item.count <= 0) { updateHotbar(); return true; }
+        }
+      }
+      if (item.count > 0) {
+        for (let i = 0; i < player.inventory.length; i++) {
+          if (!player.inventory[i]) {
+            player.inventory[i] = { type: item.type, count: item.count };
+            updateHotbar();
+            return true;
+          }
+        }
+      }
+      showMessage("Inventory full!", 2000);
+      return false;
+    }
+
+    function renderWorldChunks() {
+      const pcx = Math.floor(player.position.x / config.chunkSize);
+      const pcz = Math.floor(player.position.z / config.chunkSize);
+      const rd = Math.ceil(config.renderDistance / config.chunkSize);
+      for (let x = pcx - rd; x <= pcx + rd; x++) {
+        for (let z = pcz - rd; z <= pcz + rd; z++) {
+          const key = `${x}_${z}`;
+          if (!world.chunkData[key]) {
+            socket.emit('requestChunk', { chunkX: x, chunkZ: z });
+          }
+        }
+      }
+      for (const key in world.chunkMeshes) {
+        const [cx, cz] = key.split('_').map(Number);
+        if (Math.abs(cx - pcx) > rd + 1 || Math.abs(cz - pcz) > rd + 1) {
+          scene.remove(world.chunkMeshes[key]);
+          world.chunkMeshes[key].traverse(obj => {
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) obj.material.dispose();
+          });
+          delete world.chunkMeshes[key];
+          delete world.chunkData[key];
+        }
+      }
+    }
+
+    function renderChunk(cX, cZ) {
+      const key = `${cX}_${cZ}`;
+      const chunk = world.chunkData[key];
+      if (!chunk) return;
+
+      if (world.chunkMeshes[key]) {
+        scene.remove(world.chunkMeshes[key]);
+        world.chunkMeshes[key].traverse(obj => {
+          if (obj.geometry) obj.geometry.dispose();
+          if (obj.material) obj.material.dispose();
+        });
+        delete world.chunkMeshes[key];
+      }
+
+      const blockTypesInChunk = {};
+      const startX = cX * config.chunkSize;
+      const startZ = cZ * config.chunkSize;
+      for (let x = 0; x < config.chunkSize; x++) {
+        for (let z = 0; z < config.chunkSize; z++) {
+          for (let y = 0; y < config.worldHeight; y++) {
+            const blockId = chunk[x][z][y];
+            if (blockId === 0 || !isBlockVisible(startX + x, y, startZ + z)) continue;
+            if (!blockTypesInChunk[blockId]) blockTypesInChunk[blockId] = [];
+            blockTypesInChunk[blockId].push({ x: startX + x, y, z: startZ + z });
+          }
+        }
+      }
+
+      const chunkGroup = new THREE.Group();
+      for (const [blockId, positions] of Object.entries(blockTypesInChunk)) {
+        const props = getBlockTypeProps(parseInt(blockId));
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+        const material = createBlockMaterial(props);
+        const mesh = new THREE.InstancedMesh(geometry, material, positions.length);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        positions.forEach((pos, index) => {
+          const matrix = new THREE.Matrix4().makeTranslation(pos.x + 0.5, pos.y + 0.5, pos.z + 0.5);
+          mesh.setMatrixAt(index, matrix);
+        });
+        mesh.userData = { isBlockMesh: true, blockType: blockId };
+        chunkGroup.add(mesh);
+
+        if (props.glow) {
+          const glowGeometry = new THREE.BoxGeometry(1.1, 1.1, 1.1);
+          const glowMaterial = new THREE.MeshBasicMaterial({
+            color: props.color,
+            transparent: true,
+            opacity: 0.3
+          });
+          const glowMesh = new THREE.InstancedMesh(glowGeometry, glowMaterial, positions.length);
+          positions.forEach((pos, index) => {
+            const matrix = new THREE.Matrix4().makeTranslation(pos.x + 0.5, pos.y + 0.5, pos.z + 0.5);
+            glowMesh.setMatrixAt(index, matrix);
+          });
+          glowMesh.userData = { isGlow: true, animation: { offset: Math.random() * Math.PI * 2 } };
+          chunkGroup.add(glowMesh);
+        }
+      }
+
+      if (chunkGroup.children.length > 0) {
+        scene.add(chunkGroup);
+        world.chunkMeshes[key] = chunkGroup;
+      }
+    }
+
+    function createBlockMaterial(props) {
+      const material = new THREE.MeshStandardMaterial({
+        color: props.color,
+        transparent: props.transparent || false,
+        opacity: props.opacity || (props.transparent ? 0.7 : 1),
+        roughness: props.transparent ? 0.3 : 0.7,
+        metalness: props.transparent ? 0.2 : 0.1
+      });
+      if (props.id === world.blockTypes.dirt.id) material.roughness = 0.9;
+      else if (props.id === world.blockTypes.stone.id) { material.roughness = 0.7; material.metalness = 0.2; }
+      else if (props.id === world.blockTypes.glass.id) { material.roughness = 0.1; material.metalness = 0.5; material.envMapIntensity = 1.5; }
+      else if (props.id === world.blockTypes.quantum.id) { material.emissive = new THREE.Color(props.color); material.emissiveIntensity = 0.3; material.roughness = 0.3; material.metalness = 0.7; }
+      else if (props.id === world.blockTypes.teleport.id) { material.emissive = new THREE.Color(props.color); material.emissiveIntensity = 0.5; material.roughness = 0.2; material.metalness = 0.8; }
+      return material;
+    }
+
+    function isBlockVisible(x, y, z) {
+      const dirs = [[1,0,0], [-1,0,0], [0,1,0], [0,-1,0], [0,0,1], [0,0,-1]];
+      for (const [dx, dy, dz] of dirs) {
+        const nx = x + dx, ny = y + dy, nz = z + dz;
+        if (nx < 0 || nx >= config.worldWidth || ny < 0 || ny >= config.worldHeight || nz < 0 || nz >= config.worldDepth || getBlockAt(nx, ny, nz) === 0 || getBlockTypeProps(getBlockAt(nx, ny, nz)).transparent) return true;
+      }
+      return false;
+    }
+
+    function createBlockParticles(x, y, z, color) {
+      for (let i = 0; i < 20; i++) {
+        const mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(0.1, 0.1, 0.1),
+          new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8 })
+        );
+        mesh.position.set(x, y, z);
+        const vel = new THREE.Vector3((Math.random() - 0.5) * 0.15, Math.random() * 0.15 + 0.05, (Math.random() - 0.5) * 0.15);
+        mesh.userData = { velocity: vel, lifetime: 2, rotationSpeed: { x: (Math.random() - 0.5) * 0.1, y: (Math.random() - 0.5) * 0.1, z: (Math.random() - 0.5) * 0.1 } };
+        scene.add(mesh);
+        const anim = () => {
+          mesh.position.add(mesh.userData.velocity);
+          mesh.userData.velocity.y -= 0.004;
+          mesh.rotation.x += mesh.userData.rotationSpeed.x;
+          mesh.rotation.y += mesh.userData.rotationSpeed.y;
+          mesh.rotation.z += mesh.userData.rotationSpeed.z;
+          mesh.userData.lifetime -= 0.05;
+          if (mesh.userData.lifetime < 1) {
+            mesh.scale.multiplyScalar(0.95);
+            mesh.material.opacity = mesh.userData.lifetime / 2;
+          }
+          if (mesh.userData.lifetime <= 0) {
+            scene.remove(mesh);
+            mesh.geometry.dispose();
+            mesh.material.dispose();
+            return;
+          }
+          requestAnimationFrame(anim);
+        };
+        anim();
+      }
+    }
+
+    // Quantum Lab
+    function toggleQuantumLab() {
+      gameState.isLabOpen = !gameState.isLabOpen;
+      const lab = document.getElementById('quantumLabContainer');
+      if (gameState.isLabOpen) {
+        lab.style.display = 'flex';
+        if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+        lab.style.opacity = '0';
+        lab.style.transform = 'translate(-50%, -40%) scale(0.8)';
+        lab.style.transition = 'all 0.3s ease-out';
+        setTimeout(() => { lab.style.opacity = '1'; lab.style.transform = 'translate(-50%, -50%) scale(1)'; }, 10);
+        playSound('labOpen');
+      } else {
+        lab.style.opacity = '0';
+        lab.style.transform = 'translate(-50%, -50%) scale(0.9)';
+        setTimeout(() => { lab.style.display = 'none'; lab.style.opacity = '1'; }, 300);
+        playSound('labClose');
+      }
+    }
+
+    function generateQuantumBits() {
+      const bits = Array(48).fill().map(() => Math.random() < 0.5 ? 0 : 1);
+      let bitsHTML = `<div style="font-family: 'Orbitron', sans-serif; margin-top: 15px; background-color: rgba(0, 10, 40, 0.8); padding: 20px; border-radius: 10px; border: 1px solid var(--primary); box-shadow: 0 0 15px rgba(142, 68, 238, 0.3);">
+        <div style="margin-bottom: 15px; font-size: 18px; color: var(--accent);">Quantum Random Number Generation:</div>
+        <div style="letter-spacing: 3px; line-height: 1.7; font-size: 20px; text-align: center;">`;
+      bits.forEach((bit, idx) => {
+        bitsHTML += `<span style="display:inline-block; animation: bitReveal 0.5s ease forwards ${idx * 50}ms; opacity:0; transform: translateY(10px); color:${bit ? '#00ffaa' : '#ff3860'}; text-shadow: 0 0 8px ${bit ? '#00ffaa' : '#ff3860'};">${bit}</span>`;
+        if ((idx + 1) % 8 === 0) bitsHTML += ' ';
+        if ((idx + 1) % 16 === 0) bitsHTML += '<br>';
+      });
+      bitsHTML += `</div><div style="margin-top: 20px; font-size:14px; opacity:0.8; text-align:center; padding: 10px; background-color: rgba(0,0,0,0.3); border-radius: 5px;">Based on quantum uncertainty principle</div></div>
+        <style>@keyframes bitReveal { from {opacity:0; transform: translateY(15px);} to {opacity:1; transform: translateY(0);} }</style>`;
+      document.getElementById('quantumBits').innerHTML = bitsHTML;
+      player.energy = Math.min(100, player.energy + 20);
+      updateHUD();
+      showMessage("Generated quantum bits | +20 Energy");
+      createEnergyParticles(player.position.x, player.position.y + 1, player.position.z, 12);
+      playSound('quantum');
+    }
+
+    function createEntangledPair() {
+      const state = Math.random() < 0.5 ? 'UP' : 'DOWN';
+      const spinColor = state === 'UP' ? '#00ffaa' : '#ff3860';
+      document.getElementById('entanglementResults').innerHTML = `
+        <div style="margin-top:20px;background-color:rgba(0,10,40,0.8);padding:20px;border-radius:10px;border:1px solid var(--primary);box-shadow:0 0 15px rgba(142,68,238,0.4);">
+          <div style="font-size:22px;margin-bottom:20px;text-align:center;font-family:'Orbitron',sans-serif;">
+            <span style="color:${spinColor};font-weight:bold;text-shadow:0 0 10px ${spinColor};">Entangled Quantum State: ${state}</span>
+          </div>
+          <div style="display:flex;justify-content:space-around;margin:30px 0;position:relative;">
+            <div style="text-align:center;z-index:2;">
+              <div style="width:70px;height:70px;margin:0 auto;border-radius:50%;background: radial-gradient(circle, ${spinColor}, rgba(0,0,0,0));animation:pulse 2s infinite alternate;box-shadow:0 0 20px ${spinColor};position:relative;">
+                <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:25px;height:25px;border-radius:50%;background-color:${spinColor};box-shadow:0 0 15px ${spinColor};"></div>
+              </div>
+              <p style="margin-top:15px;font-weight:bold;font-family:'Orbitron',sans-serif;">Particle A </p>
+              <p style="font-size:14px;opacity:0.8;">Location: Earth</p>
+            </div>
+            <div style="position:absolute;top:50%;left:0;right:0;height:4px;background: linear-gradient(to right,rgba(0,0,0,0), ${spinColor}, rgba(0,0,0,0));transform:translateY(-50%);z-index:1;">
+              <div style="position:absolute;top:50%;left:20%;right:20%;height:2px;background-color:${spinColor};transform:translateY(-50%);">
+                <div style="position:absolute;top:50%;left:0;width:10px;height:10px;border-radius:50%;background-color:white;transform:translate(-50%,-50%);animation:moveDot 3s infinite linear;box-shadow:0 0 8px white;"></div>
+              </div>
+            </div>
+            <div style="text-align:center;z-index:2;">
+              <div style="width:70px;height:70px;margin:0 auto;border-radius:50%;background: radial-gradient(circle, ${spinColor}, rgba(0,0,0,0));animation:pulse 2s infinite alternate-reverse;box-shadow:0 0 20px ${spinColor};position:relative;">
+                <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:25px;height:25px;border-radius:50%;background-color:${spinColor};box-shadow:0 0 15px ${spinColor};"></div>
+              </div>
+              <p style="margin-top:15px;font-weight:bold;font-family:'Orbitron',sans-serif;">Particle B</p>
+              <p style="font-size:14px;opacity:0.8;">Location: Alpha Centauri</p>
+            </div>
+          </div>
+          <div style="margin-top:20px;padding:15px;background-color:rgba(0,0,0,0.3);border-radius:5px;font-family:'VT323',monospace;">
+            <p style="margin-bottom:10px;"><strong>Quantum Entanglement:</strong> Observing one particle instantly correlates the other's state.</p>
+            <p>"Spooky action at a distance" - enables quantum teleportation and computing.</p>
+          </div>
+        </div>
+        <style>@keyframes pulse { 0% {transform:scale(0.9);opacity:0.8;} 100% {transform:scale(1.1);opacity:1;} } @keyframes moveDot { 0% {left:0%;} 50% {left:100%;} 50.001% {left:100%;} 100% {left:0%;} }</style>`;
+      player.energy = Math.min(100, player.energy + 15);
+      updateHUD();
+      createEnergyParticles(player.position.x + 2, player.position.y + 1, player.position.z, 15, spinColor === '#00ffaa' ? 0x00ffaa : 0xff3860);
+      createEnergyParticles(player.position.x - 2, player.position.y + 1, player.position.z, 15, spinColor === '#00ffaa' ? 0x00ffaa : 0xff3860);
+      showMessage("Created entangled pair | +15 Energy");
+      playSound('entangle');
+    }
+
+    function showQuantumBuilds() {
+      document.getElementById('buildingResults').innerHTML = `
+        <div style="margin-top:20px;background-color:rgba(0,10,40,0.8);padding:20px;border-radius:10px;border:1px solid var(--primary);box-shadow:0 0 15px rgba(142,68,238,0.4);">
+          <div style="display:flex;margin-bottom:25px;gap:10px;">
+            <div style="flex:1;text-align:center;cursor:pointer;transition:all 0.2s ease;" onclick="showBuild(1)" onmouseover="this.style.transform='scale(1.05)';" onmouseout="this.style.transform='scale(1)';">
+              <div style="width:70px;height:70px;margin:0 auto;background-color:var(--primary);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:35px;box-shadow:0 0 10px var(--primary);">💻</div>
+              <p style="margin-top:10px;font-family:'Orbitron',sans-serif;">Quantum Computer</p>
+            </div>
+            <div style="flex:1;text-align:center;cursor:pointer;transition:all 0.2s ease;" onclick="showBuild(2)" onmouseover="this.style.transform='scale(1.05)';" onmouseout="this.style.transform='scale(1)';">
+              <div style="width:70px;height:70px;margin:0 auto;background-color:var(--accent);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:35px;box-shadow:0 0 10px var(--accent);">🌀</div>
+              <p style="margin-top:10px;font-family:'Orbitron',sans-serif;">Teleporter</p>
+            </div>
+            <div style="flex:1;text-align:center;cursor:pointer;transition:all 0.2s ease;" onclick="showBuild(3)" onmouseover="this.style.transform='scale(1.05)';" onmouseout="this.style.transform='scale(1)';">
+              <div style="width:70px;height:70px;margin:0 auto;background-color:#ff3860;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:35px;box-shadow:0 0 10px #ff3860;">⚡</div>
+              <p style="margin-top:10px;font-family:'Orbitron',sans-serif;">Energy Generator</p>
+            </div>
+            <div style="flex:1;text-align:center;cursor:pointer;transition:all 0.2s ease;" onclick="showBuild(4)" onmouseover="this.style.transform='scale(1.05)';" onmouseout="this.style.transform='scale(1)';">
+              <div style="width:70px;height:70px;margin:0 auto;background-color:#00ffaa;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:35px;box-shadow:0 0 10px #00ffaa;">🔗</div>
+              <p style="margin-top:10px;font-family:'Orbitron',sans-serif;">Entanglement Chamber</p>
+            </div>
+          </div>
+          <div id="buildDesc1" style="display:block;padding:20px;background:rgba(0,0,0,0.3);border-radius:8px;min-height:220px;">
+            <h3 style="color:var(--primary);margin-bottom:15px;font-family:'Orbitron',sans-serif;text-shadow:0 0 10px var(--primary-dark);">Quantum Computer</h3>
+            <p>Build computational structures with quantum blocks at corners, glass on faces, stone in the center.</p>
+            <div style="display:flex;align-items:center;gap:15px;margin:20px 0;font-size:28px;justify-content:center;">
+              <div style="display:flex;flex-direction:column;align-items:center;"><div style="font-size:32px;">🔮🔮🔮</div><div style="font-size:14px;margin-top:5px;">Quantum Corners</div></div>
+              <div>➕</div>
+              <div style="display:flex;flex-direction:column;align-items:center;"><div style="font-size:32px;">💎💎</div><div style="font-size:14px;margin-top:5px;">Glass Faces</div></div>
+              <div>➕</div>
+              <div style="display:flex;flex-direction:column;align-items:center;"><div style="font-size:32px;">⚪</div><div style="font-size:14px;margin-top:5px;">Stone Core</div></div>
+            </div>
+            <p style="margin-top:15px;font-style:italic;padding:10px;background:rgba(0,0,0,0.2);border-radius:5px;">Build a 3×3×3 cube with quantum blocks at corners, glass on faces, and stone in center.</p>
+          </div>
+          <div id="buildDesc2" style="display:none;padding:20px;background:rgba(0,0,0,0.3);border-radius:8px;min-height:220px;">
+            <h3 style="color:var(--accent);margin-bottom:15px;font-family:'Orbitron',sans-serif;text-shadow:0 0 10px var(--accent);">Teleportation Network</h3>
+            <p>Create linked teleportation pads to travel instantly between distant locations.</p>
+            <div style="display:flex;align-items:center;gap:15px;margin:20px 0;font-size:28px;justify-content:center;">
+              <div style="display:flex;flex-direction:column;align-items:center;"><div style="font-size:32px;">✨</div><div style="font-size:14px;margin-top:5px;">Teleport Block</div></div>
+              <div>➕</div>
+              <div style="display:flex;flex-direction:column;align-items:center;"><div style="font-size:32px;">🔮🔮</div><div style="font-size:14px;margin-top:5px;">Quantum Ring</div></div>
+              <div>➕</div>
+              <div style="display:flex;flex-direction:column;align-items:center;"><div style="font-size:32px;">💎</div><div style="font-size:14px;margin-top:5px;">Glass</div></div>
+            </div>
+            <p style="margin-top:15px;font-style:italic;padding:10px;background:rgba(0,0,0,0.2);border-radius:5px;">Place a teleport block surrounded by quantum blocks and glass to form a pad.</p>
+          </div>
+          <div id="buildDesc3" style="display:none;padding:20px;background:rgba(0,0,0,0.3);border-radius:8px;min-height:220px;">
+            <h3 style="color:#ff3860;margin-bottom:15px;font-family:'Orbitron',sans-serif;text-shadow:0 0 10px #ff3860;">Quantum Energy Generator</h3>
+            <p>Generate quantum energy to power devices and restore your energy levels.</p>
+            <div style="display:flex;align-items:center;gap:15px;margin:20px 0;font-size:28px;justify-content:center;">
+              <div style="display:flex;flex-direction:column;align-items:center;"><div style="font-size:32px;">🔮</div><div style="font-size:14px;margin-top:5px;">Quantum Core</div></div>
+              <div>➕</div>
+              <div style="display:flex;flex-direction:column;align-items:center;"><div style="font-size:32px;">🟤🟤🟤</div><div style="font-size:14px;margin-top:5px;">Dirt Foundation</div></div>
+              <div>➕</div>
+              <div style="display:flex;flex-direction:column;align-items:center;"><div style="font-size:32px;">⚪⚪</div><div style="font-size:14px;margin-top:5px;">Stone Pillars</div></div>
+            </div>
+            <p style="margin-top:15px;font-style:italic;padding:10px;background:rgba(0,0,0,0.2);border-radius:5px;">Build a generator with a quantum core on stone pillars with a dirt base.</p>
+          </div>
+          <div id="buildDesc4" style="display:none;padding:20px;background:rgba(0,0,0,0.3);border-radius:8px;min-height:220px;">
+            <h3 style="color:#00ffaa;margin-bottom:15px;font-family:'Orbitron',sans-serif;text-shadow:0 0 10px #00ffaa;">Entanglement Chamber</h3>
+            <p>Create a chamber where blocks maintain synchronized states across distance.</p>
+            <div style="display:flex;align-items:center;gap:15px;margin:20px 0;font-size:28px;justify-content:center;">
+              <div style="display:flex;flex-direction:column;align-items:center;"><div style="font-size:32px;">🔮🔮</div><div style="font-size:14px;margin-top:5px;">Quantum Nodes</div></div>
+              <div>➕</div>
+              <div style="display:flex;flex-direction:column;align-items:center;"><div style="font-size:32px;">💎💎💎</div><div style="font-size:14px;margin-top:5px;">Glass Chamber</div></div>
+            </div>
+            <p style="margin-top:15px;font-style:italic;padding:10px;background:rgba(0,0,0,0.2);border-radius:5px;">Build two matching glass chambers with quantum blocks for synchronization.</p>
+          </div>
+        </div>`;
+      player.energy = Math.min(100, player.energy + 10);
+      updateHUD();
+      showMessage("Quantum construction knowledge acquired | +10 Energy");
+      playSound('research');
+    }
+
+    function showBuild(id) {
+      for (let i = 1; i <= 4; i++) {
+        document.getElementById(`buildDesc${i}`).style.display = i === id ? 'block' : 'none';
+      }
+    }
+
+    // Particles and Effects
+    function createEnergyParticles(x, y, z, count = 15, color = 0xAA00FF) {
+      for (let i = 0; i < count; i++) {
+        const mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(0.1, 8, 8),
+          new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8 })
+        );
+        mesh.position.set(x + (Math.random() - 0.5) * 0.5, y + (Math.random() - 0.5) * 0.5, z + (Math.random() - 0.5) * 0.5);
+        const angle = Math.random() * Math.PI * 2;
+        const velocity = new THREE.Vector3(
+          Math.cos(angle) * (0.05 + Math.random() * 0.15),
+          0.03 + Math.random() * 0.07,
+          Math.sin(angle) * (0.05 + Math.random() * 0.15)
+        );
+        mesh.userData = { velocity, lifetime: 2 + Math.random() * 1, origin: new THREE.Vector3(x, y, z), r: 0.3 + Math.random() * 0.7, a: angle, as: (Math.random() - 0.5) * 0.15 };
+        scene.add(mesh);
+        const anim = () => {
+          mesh.userData.lifetime -= 0.01;
+          mesh.userData.a += mesh.userData.as;
+          mesh.position.set(
+            mesh.userData.origin.x + Math.cos(mesh.userData.a) * mesh.userData.r,
+            mesh.position.y + mesh.userData.velocity.y * 0.1,
+            mesh.userData.origin.z + Math.sin(mesh.userData.a) * mesh.userData.r
+          );
+          mesh.userData.r *= 0.99;
+          if (mesh.userData.lifetime < 1) {
+            mesh.material.opacity = mesh.userData.lifetime;
+            mesh.scale.multiplyScalar(0.98);
+          }
+          if (mesh.userData.lifetime <= 0) {
+            scene.remove(mesh);
+            mesh.geometry.dispose();
+            mesh.material.dispose();
+            return;
+          }
+          requestAnimationFrame(anim);
+        };
+        anim();
+      }
+    }
+
+    function animateQuantumBlocks(delta) {
+      scene.traverse(obj => {
+        if (obj.userData && obj.userData.isGlow) {
+          const t = Date.now() * 0.001;
+          const pf = Math.sin(t + obj.userData.animation.offset) * 0.15 + 1.05;
+          obj.scale.set(obj.userData.originalScale * pf, obj.userData.originalScale * pf, obj.userData.originalScale * pf);
+          obj.rotation.y += delta * 0.5;
+          obj.rotation.x += delta * 0.2;
+        }
+      });
+    }
+
+    // Day/Night Cycle (Server-Synchronized)
+    function updateDayNightCycle(delta) {
+      if (!config.dayNightCycle) return;
+      // Use world.time from server instead of local increment
+      const sunAngle = world.time * Math.PI * 2;
+      const sunHeight = Math.sin(sunAngle);
+      const sunDistance = 300;
+      sunLight.position.set(Math.cos(sunAngle) * sunDistance, sunHeight * sunDistance, Math.sin(sunAngle + Math.PI / 2) * sunDistance);
+      sunLight.intensity = 1.2 * Math.max(0, sunHeight);
+      moonLight.position.set(-Math.cos(sunAngle) * sunDistance, -sunHeight * sunDistance, -Math.sin(sunAngle + Math.PI / 2) * sunDistance);
+      moonLight.intensity = 0.3 * (1 - Math.max(0, sunHeight));
+      ambientLight.intensity = 0.2 + 0.3 * Math.max(0, sunHeight);
+      const skyColor = new THREE.Color();
+      const zenithColor = new THREE.Color(0x88aaff), horizonColor = new THREE.Color(0x4466aa), nightColor = new THREE.Color(0x001133);
+      skyColor.lerpColors(sunHeight > 0 ? horizonColor : nightColor, sunHeight > 0 ? zenithColor : horizonColor, sunHeight > 0 ? sunHeight : 0.5 + sunHeight);
+      scene.background = skyColor;
+      scene.fog = new THREE.FogExp2(skyColor.clone().lerpColors(sunHeight < 0 ? nightColor : horizonColor, sunHeight < 0 ? horizonColor : zenithColor, sunHeight < 0 ? 0.2 + 0.3 * (0.5 + sunHeight) : sunHeight * 0.7), 0.005);
+      if (!world.lastDayNightUpdate || Date.now() - world.lastDayNightUpdate > 2000) {
+        scene.traverse(obj => {
+          if (obj.isMesh && !obj.userData.isGlow && obj.material.color && obj.userData.originalColor !== undefined) {
+            obj.material.color.set(new THREE.Color(obj.userData.originalColor).multiplyScalar(0.5 + 0.5 * Math.max(0.2, sunHeight)));
+          }
+        });
+        world.lastDayNightUpdate = Date.now();
+      }
+    }
+
+    // Weather (Server-Synchronized)
+    function updateWeather(delta) {
+      if (!config.enableWeatherEffects) return;
+      // Weather is now synchronized via world.weather from server
+      // Add visual effects based on world.weather (e.g., rain particles)
+      console.log(`Current weather: ${world.weather}`); // Placeholder for debugging
+    }
+
+    // Teleportation
+    function checkTeleport() {
+      const bx = Math.floor(player.position.x), by = Math.floor(player.position.y - 0.1), bz = Math.floor(player.position.z);
+      if (getBlockAt(bx, by, bz) === world.blockTypes.teleport.id) {
+        const teleporter = world.teleporters.find(t => t.position.x === bx && t.position.y === by && t.position.z === bz);
+        if (teleporter && teleporter.destination) {
+          playSound('teleport');
+          createTeleportEffect(player.position.x, player.position.y, player.position.z);
+          player.position.set(teleporter.destination.x + 0.5, teleporter.destination.y + 1.5, teleporter.destination.z + 0.5);
+          createTeleportEffect(player.position.x, player.position.y, player.position.z);
+          showMessage("Teleported!");
+          player.energy = Math.max(0, player.energy - 10);
+          updateHUD();
+        }
+      }
+    }
+
+    function createTeleportEffect(x, y, z) {
+      for (let i = 0; i < 24; i++) {
+        const angle = (i / 24) * Math.PI * 2;
+        createEnergyParticles(x + Math.cos(angle) * 0.8, y, z + Math.sin(angle) * 0.8, 3, 0x00FFAA);
+      }
+      for (let i = 0; i < 10; i++) createEnergyParticles(x, y + i * 0.2, z, 5, 0x00FFAA);
+    }
+
+    // World Expansion (Stub)
+    function checkForWorldExpansion(direction) {
+      if (world.lastExpansion && Date.now() - world.lastExpansion < 2000) return;
+      world.lastExpansion = Date.now();
+      showMessage(`Discovered new lands to the ${direction}!`, 2000);
+    }
+
+    // UI and Minimap
+    function setupUI() {
+      updateHotbar();
+      updateMinimap();
+    }
+
+    function updateMinimap() {
+      // Placeholder for minimap implementation
+    }
+
+    // Miscellaneous
+    function visualizeInitialTerrain() {
+      const gridHelper = new THREE.GridHelper(Math.max(config.worldWidth, config.worldDepth), Math.max(config.worldWidth, config.worldDepth), 0x444444, 0x222222);
+      gridHelper.position.set(config.worldWidth / 2, 0, config.worldDepth / 2);
+      scene.add(gridHelper);
+    }
+
+    function setPlayerAnimation(anim, state) {
+      if (player.animations[anim] !== state) {
+        player.animations[anim] = state;
+        player.lastAnimation = Date.now();
+      }
+    }
+
+    function updateHUD() {
+      document.getElementById('healthFill').style.width = `${player.health}%`;
+      document.getElementById('energyFill').style.width = `${player.energy}%`;
+    }
+
+    function showMessage(text, duration = 3000) {
+      const msgBox = document.getElementById('messageBox');
+      msgBox.textContent = text;
+      msgBox.style.display = 'block';
+      msgBox.style.animation = 'none';
+      setTimeout(() => msgBox.style.animation = 'fadeIn 0.3s ease-in-out', 10);
+      if (window.messageTimeout) clearTimeout(window.messageTimeout);
+      window.messageTimeout = setTimeout(() => {
+        msgBox.style.opacity = '0';
+        msgBox.style.transform = 'translate(-50%, -20px)';
+        setTimeout(() => { msgBox.style.display = 'none'; msgBox.style.opacity = '1'; msgBox.style.transform = 'translate(-50%, 0)'; }, 300);
+      }, duration);
+    }
+
+    function updateLoadingProgress(progress, msg) {
+      document.getElementById('loadingProgress').style.width = `${progress}%`;
+      document.getElementById('loadingText').textContent = msg;
+    }
+
+    // Sound System
+    async function loadAssets() {
+      const response = await fetch('/assets.json');
+      assets = await response.json();
+    }
+
+    function initializeSounds() {
+      const sounds = {};
+      for (const soundName in assets.sounds) {
+        sounds[soundName] = new Audio(assets.sounds[soundName]);
+      }
+      return sounds;
+    }
+
+    function playSound(name, loop = false) {
+      if (soundEffects[name]) {
+        const sound = soundEffects[name];
+        sound.currentTime = 0;
+        sound.loop = loop;
+        sound.play().catch(e => console.log("Sound play error:", e));
+      }
+    }
+
+    // Helper for Vector3 positioning
+    THREE.Mesh.prototype.setPosition = function(x, y, z) { this.position.set(x, y, z); return this; };
+  </script>
+</body>
+</html>
